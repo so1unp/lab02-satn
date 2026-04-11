@@ -87,26 +87,58 @@ Además, en ambos modos:
 
 ### Verificación funcional
 
-Pruebas realizadas:
+Las pruebas se ejecutan en este orden para que cada escenario sea fácil de validar.
+
+Escenario 1: origen inexistente (debe fallar)
 
 ```bash
 ./bin/mycopy s /tmp/no_existe_lab_999 /tmp/lab_dst_small.txt
 # open src: No such file or directory
 # exit code: 1
 
-./bin/mycopy s /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
-# exit code: 0
-
-./bin/mycopy s /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
-# open dst: File exists
-# exit code: 1
-
 ./bin/mycopy f /tmp/no_existe_lab_999 /tmp/lab_dst_small.txt
 # fopen src: No such file or directory
 # exit code: 1
+```
 
+Escenario 2: directorio de destino inexistente (debe fallar)
+
+```bash
+printf 'abc\n' > /tmp/lab_src_small.txt
+
+./bin/mycopy s /tmp/lab_src_small.txt /tmp/dir_que_no_existe/out.txt
+# open dst: No such file or directory
+# exit code: 1
+
+./bin/mycopy f /tmp/lab_src_small.txt /tmp/dir_que_no_existe/out.txt
+# fopen dst: No such file or directory
+# exit code: 1
+```
+
+Preparación para escenarios de copia correcta y destino existente:
+
+```bash
+rm -f /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
+printf 'abc\n' > /tmp/lab_src_small.txt
+```
+
+Escenario 3: copia correcta con destino ausente (debe funcionar)
+
+```bash
+./bin/mycopy s /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
+# exit code: 0
+
+rm -f /tmp/lab_dst_small.txt
 ./bin/mycopy f /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
 # exit code: 0
+```
+
+Escenario 4: destino ya existe (debe fallar)
+
+```bash
+./bin/mycopy s /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
+# open dst: File exists
+# exit code: 1
 
 ./bin/mycopy f /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
 # fopen dst: File exists
@@ -116,6 +148,11 @@ Pruebas realizadas:
 ### Comparación con strace -c (> 1 MiB)
 
 Se generó un archivo de 2 MiB y se ejecutó:
+
+```bash
+dd if=/dev/urandom of=/tmp/lab_big.bin bs=1M count=2 status=none
+ls -lh /tmp/lab_big.bin
+```
 
 ```bash
 strace -c ./bin/mycopy s /tmp/lab_big.bin /tmp/lab_out_s.bin
