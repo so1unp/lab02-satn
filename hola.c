@@ -2,10 +2,11 @@
  * Imprime un saludo por la salida estándar.
  */
 
-#include <stdlib.h>     // exit()
+#include <stdio.h>   // printf()
+#include <stdlib.h>  // exit(), EXIT_SUCCESS
 
 int main(void)
 {
-    // Termina la ejecución del proceso.
+    printf("hola francisco\n");
     exit(EXIT_SUCCESS);
 }
