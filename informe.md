@@ -43,3 +43,24 @@ En conclusión, aunque el mensaje se imprime con `printf()` (función de bibliot
 Aparecen otras syscalls (como `open`, `mmap`, `brk`, etc.) asociadas a la carga dinámica de bibliotecas y manejo de memoria, pero no son parte directa de la impresión del saludo.
 
 ---
+
+## Punto 2 — bin/fail
+
+Al ejecutar `strace ./bin/fail` se observa que el programa intenta abrir un archivo llamado `archivo.txt` en el directorio actual:
+
+- Si existe:
+  - `openat(AT_FDCWD, "archivo.txt", O_RDONLY) = 3`
+  - imprime `ok` por stdout: `write(1, "ok\n", 3)`
+  - finaliza con éxito: `exit_group(0)`
+
+- Si no existe:
+  - `openat(...) = -1 ENOENT`
+  - imprime `error` por stderr: `write(2, "error\n", 6)`
+  - finaliza con error: `exit_group(1)`
+
+Conclusión: el “fallo” se debe a que `archivo.txt` no está presente.  
+Solución (sin acceso al código fuente): crear `archivo.txt` (por ejemplo con `touch archivo.txt`) antes de ejecutar `bin/fail`.
+
+---
+
+
