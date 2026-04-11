@@ -1,6 +1,7 @@
 # Informe breve — Análisis con `strace` de `bin/hola`
 
 ## Comando ejecutado
+
 Se ejecutó el programa observando la salida de `strace` por pantalla:
 
 ```bash
@@ -8,9 +9,11 @@ strace ./bin/hola
 ```
 
 ## Objetivo
+
 Identificar la llamada al sistema (syscall) que termina usando `printf()` para imprimir el saludo por la salida estándar.
 
 ## Hallazgos principales
+
 La impresión del mensaje se realiza mediante la syscall:
 
 ```text
@@ -18,6 +21,7 @@ write(1, "hola franciso\n", 14) = 14
 ```
 
 **Descripción:**
+
 - `write` es la syscall que escribe bytes en un descriptor de archivo.
 - El primer argumento `1` corresponde a **stdout** (salida estándar).
 - El segundo argumento es el **buffer** con el texto a imprimir.
@@ -27,19 +31,25 @@ write(1, "hola franciso\n", 14) = 14
 En conclusión, aunque el mensaje se imprime con `printf()` (función de biblioteca), la escritura real hacia la terminal termina ocurriendo a nivel de sistema con `write()` sobre stdout.
 
 ## Otras syscalls relevantes observadas
+
 - Inicio del programa:
-  ```text
-  execve("./bin/hola", ["./bin/hola"], ...) = 0
-  ```
-  `execve` es la syscall que carga y ejecuta el binario.
+
+```text
+execve("./bin/hola", ["./bin/hola"], ...) = 0
+```
+
+`execve` es la syscall que carga y ejecuta el binario.
 
 - Finalización del programa:
-  ```text
-  exit_group(0) = ?
-  ```
-  `exit_group(0)` indica que el proceso termina correctamente (código de salida 0).
+
+```text
+exit_group(0) = ?
+```
+
+`exit_group(0)` indica que el proceso termina correctamente (código de salida 0).
 
 ## Nota
+
 Aparecen otras syscalls (como `open`, `mmap`, `brk`, etc.) asociadas a la carga dinámica de bibliotecas y manejo de memoria, pero no son parte directa de la impresión del saludo.
 
 ---
@@ -63,4 +73,76 @@ Solución (sin acceso al código fuente): crear `archivo.txt` (por ejemplo con `
 
 ---
 
+## Punto 3 - mycopy
 
+Se implementó `bin/mycopy` con dos modos:
+
+- `s`: usa `open`, `read`, `write`, `close`.
+- `f`: usa `fopen`, `fread`, `fwrite`, `fclose`.
+
+Además, en ambos modos:
+
+- si el origen no existe, falla e imprime error con `perror`.
+- si el destino existe, falla e imprime error con `perror`.
+
+### Verificación funcional
+
+Pruebas realizadas:
+
+```bash
+./bin/mycopy s /tmp/no_existe_lab_999 /tmp/lab_dst_small.txt
+# open src: No such file or directory
+# exit code: 1
+
+./bin/mycopy s /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
+# exit code: 0
+
+./bin/mycopy s /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
+# open dst: File exists
+# exit code: 1
+
+./bin/mycopy f /tmp/no_existe_lab_999 /tmp/lab_dst_small.txt
+# fopen src: No such file or directory
+# exit code: 1
+
+./bin/mycopy f /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
+# exit code: 0
+
+./bin/mycopy f /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
+# fopen dst: File exists
+# exit code: 1
+```
+
+### Comparación con strace -c (> 1 MiB)
+
+Se generó un archivo de 2 MiB y se ejecutó:
+
+```bash
+strace -c ./bin/mycopy s /tmp/lab_big.bin /tmp/lab_out_s.bin
+strace -c ./bin/mycopy f /tmp/lab_big.bin /tmp/lab_out_f.bin
+```
+
+Ambas copias fueron correctas (`cmp` devolvió 0 en los dos casos).
+
+Resumen de resultados:
+
+- Modo `s`:
+  - `read`: 8194 llamadas
+  - `write`: 8192 llamadas
+  - total de syscalls: 16418
+  - tiempo total: 0,144894 s
+- Modo `f`:
+  - `read`: 514 llamadas
+  - `write`: 512 llamadas
+  - total de syscalls: 1063
+  - tiempo total: 0,011822 s
+
+### Diferencias observadas
+
+En este experimento se usó `BUFFER_SIZE = 256` en el programa. Con ese tamaño, el modo `s` hace muchas más llamadas al kernel porque cada iteración dispara `read` y `write` de bloques pequeños.
+
+En cambio, en modo `f`, la biblioteca estándar aplica buffering interno sobre los `FILE*`, por lo que termina realizando menos syscalls al kernel (bloques más grandes). Por eso el conteo de `read/write` en `strace -c` es mucho menor que en modo `s`.
+
+Conclusión: con buffer de 256 bytes y archivo de 2 MiB, la diferencia entre ambas estrategias es evidente. El modo `f` realiza menos syscalls y tarda bastante menos tiempo total que el modo `s`.
+
+---

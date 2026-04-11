@@ -3,117 +3,159 @@
  */
 
 #include <stdlib.h>     // exit()
-#include <stdio.h>
-#include <string.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include <stdio.h>  //para fprintf, perror
+#include <string.h> //para strcmp
+#include <fcntl.h> // para open
+#include <unistd.h> // para read/write/close
 
-#define BUFFER_SIZE 1
-#define MODE_PARAM_LENGTH 1
 
-int copySyscall(char *from, char*to);
-int copyStdio(char *from, char*to);
-int validateParams(int paramsCount,char*params[]);
+#define BUFFER_SIZE 256
+
+static int copy_syscalls(const char *src, const char *dst);
+static int copy_stdio(const char *src, const char *dst);
+
+static void usage(const char *prog)
+{
+    fprintf(stderr, "Uso: %s [s|f] archivo-origen archivo-destino\n", prog);
+    fprintf(stderr, "  s: usar open/read/write/close\n");
+    fprintf(stderr, "  f: usar fopen/fread/fwrite/fclose\n");
+    exit(EXIT_FAILURE);
+}
 
 int main(int argc, char *argv[])
 {
-    char *mode = argv[1];
-    char *from = argv[2];
-    char *to = argv[3];
-
-    if(validateParams(argc,argv) < 0){
-        perror("Error parametro corrupto");
-        exit(EXIT_FAILURE);
+    if (argc != 4) {
+        usage(argv[0]);
     }
 
-    if(strlen(mode) != MODE_PARAM_LENGTH){
-        perror("Error parametro corrupto");
-        exit(EXIT_FAILURE);
+    const char *mode = argv[1];
+    const char *from = argv[2];
+    const char *to   = argv[3];
+
+    if (strcmp(mode, "s") != 0 && strcmp(mode, "f") != 0) {
+        fprintf(stderr, "Modo inválido: '%s'\n", mode);
+        usage(argv[0]);
     }
 
-    if(mode[0] == 's'){
-        if(copySyscall(from,to) < 0){
-            perror("Error no se pudo copiar el archivo");
-            exit(EXIT_FAILURE);
+    if (strcmp(mode, "s") == 0) {
+        if (copy_syscalls(from, to) < 0) {
+            return EXIT_FAILURE;
         }
-    } else if(mode[0] == 'f') {
-        if(copyStdio(from,to) < 0){
-            perror("Error no se pudo copiar el archivo");
-            exit(EXIT_FAILURE);
+    } else {
+        if (copy_stdio(from, to) < 0) {
+            return EXIT_FAILURE;
         }
     }
 
-    // Termina la ejecución del proceso.
-    exit(EXIT_SUCCESS);
+    return EXIT_SUCCESS;
 }
 
-int copySyscall(char *from, char*to) {
-    int fdFrom;
-    int fdTo;
-    int bytesRead;
-    char buffer[BUFFER_SIZE];
-
-    if((fdFrom = open(from,O_RDONLY)) < 0){
-        perror("Error el archivo origen no existe");
-        return - 1;
-    }
-    if(open(to,O_RDONLY) > 0){
-        perror("Error el archivo destion ya existe");
-        return - 1;
-    }
-    fdTo = open(to,O_CREAT | O_WRONLY, 0644);
-    while((bytesRead = read(fdFrom,buffer,BUFFER_SIZE)) > 0){
-        if(write(fdTo,buffer,bytesRead) < 0 ){
-            perror("Error al escribir el archivo");
-            return - 1;
-        }
-    }
-    close(fdFrom);
-    close(fdTo);
-    return 0;
-}
-
-int copyStdio(char *from, char*to){
-    FILE *fpFrom;
-    FILE *fpTo;
-    char buffer[BUFFER_SIZE];
-    int bytesRead;
-
-    fpFrom = fopen(from,"r");
-    if(fpFrom == NULL){
-        perror("Error el archivo origen no existe");
-        return -1;
-    }
-    
-    fpTo = fopen(to,"r");
-
-    if(fpTo != NULL){
-        perror("Error el archivo destino ya existe");
+static int copy_syscalls(const char *src, const char *dst)
+{
+    int in = open(src, O_RDONLY);
+    if (in < 0) {
+        perror("open src");
         return -1;
     }
 
-    fpTo = fopen(to,"w");
-
-    while((bytesRead = fread(buffer,BUFFER_SIZE,BUFFER_SIZE,fpFrom)) > 0) {
-        if(fwrite(buffer,BUFFER_SIZE,BUFFER_SIZE,fpTo) < 0 ){
-            perror("Error al escribir el archivo");
-            return - 1;
-        }
-    }
-
-    return 0;
-}
-
-int validateParams(int paramsCount,char*params[]) {
-    if(paramsCount < 0) {
-        perror("El contador de parametros no puede ser negativo");
+    int out = open(dst, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    if (out < 0) {
+        perror("open dst");
+        close(in);
         return -1;
     }
-    for(int i = 0; i < paramsCount; i++) {
-        if(strlen(params[i]) <= 0) { 
-            perror("Error el parametro svino vacio");
+
+    char buf[BUFFER_SIZE];
+
+    for (;;) {
+        ssize_t nread = read(in, buf, sizeof buf);
+        if (nread == 0) break;
+        if (nread < 0) {
+            perror("read");
+            close(out);
+            close(in);
             return -1;
         }
+
+        size_t off = 0;
+        while (off < (size_t)nread) {
+            ssize_t nw = write(out, buf + off, (size_t)nread - off);
+            if (nw < 0) {
+                perror("write");
+                close(out);
+                close(in);
+                return -1;
+            }
+            off += (size_t)nw;
+        }
     }
+
+    if (close(out) < 0) {
+        perror("close destino");
+        close(in);
+        return -1;
+    }
+
+    if (close(in) < 0) {
+        perror("close origen");
+        return -1;
+    }
+
     return 0;
 }
+
+static int copy_stdio(const char *src, const char *dst)
+{
+    FILE *in = fopen(src, "rb");
+    if (in == NULL) {
+        perror("fopen src");
+        return -1;
+    }
+
+    FILE *out = fopen(dst, "wbx");
+    if (out == NULL) {
+        perror("fopen dst");
+        fclose(in);
+        return -1;
+    }
+
+    char buf[BUFFER_SIZE];
+
+    for (;;) {
+        size_t nread = fread(buf, 1, sizeof buf, in);
+
+        if (nread > 0) {
+            size_t nwritten = fwrite(buf, 1, nread, out);
+            if (nwritten != nread) {
+                perror("fwrite");
+                fclose(out);
+                fclose(in);
+                return -1;
+            }
+        }
+
+        if (nread < sizeof buf) {
+            if (ferror(in)) {
+                perror("fread");
+                fclose(out);
+                fclose(in);
+                return -1;
+            }
+            break;
+        }
+    }
+
+    if (fclose(out) != 0) {
+        perror("fclose dst");
+        fclose(in);
+        return -1;
+    }
+
+    if (fclose(in) != 0) {
+        perror("fclose src");
+        return -1;
+    }
+
+    return 0;
+}
+
