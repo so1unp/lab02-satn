@@ -2,43 +2,33 @@
 
 ## Comando ejecutado
 
-Se ejecutó el programa observando la salida de `strace` por pantalla:
+Se ejecutó `bin/hola` con `strace` en ambos caminos (`con` y `sin` argumento):
 
 ```bash
-strace ./bin/hola
+strace -e execve,write,exit_group ./bin/hola
+strace -e execve,write,exit_group ./bin/hola miyen
 ```
 
 ## Objetivo
 
-Identificar la llamada al sistema (syscall) que termina usando `printf()` para imprimir el saludo por la salida estándar.
+Verificar qué syscall usa `printf()` para imprimir y cómo cambia la salida según `argv[1]`.
 
 ## Hallazgos principales
 
-La impresión del mensaje se realiza mediante la syscall:
+En ambos casos, la impresión termina en `write` sobre `stdout` (`fd=1`):
 
 ```text
-write(1, "hola franciso\n", 14) = 14
+write(1, "Hola desconocido\n", 17) = 17
+write(1, "Hola miyen\n", 11) = 11
 ```
-
-**Descripción:**
-
-- `write` es la syscall que escribe bytes en un descriptor de archivo.
-- El primer argumento `1` corresponde a **stdout** (salida estándar).
-- El segundo argumento es el **buffer** con el texto a imprimir.
-- El tercer argumento indica la **cantidad de bytes** a escribir.
-- El valor de retorno (`= 14`) indica cuántos bytes se escribieron efectivamente.
-
-En conclusión, aunque el mensaje se imprime con `printf()` (función de biblioteca), la escritura real hacia la terminal termina ocurriendo a nivel de sistema con `write()` sobre stdout.
 
 ## Otras syscalls relevantes observadas
 
-- Inicio del programa:
+- Con argumento:
 
 ```text
-execve("./bin/hola", ["./bin/hola"], ...) = 0
+execve("./bin/hola", ["./bin/hola", "miyen"], ...) = 0
 ```
-
-`execve` es la syscall que carga y ejecuta el binario.
 
 - Finalización del programa:
 
@@ -46,30 +36,27 @@ execve("./bin/hola", ["./bin/hola"], ...) = 0
 exit_group(0) = ?
 ```
 
-`exit_group(0)` indica que el proceso termina correctamente (código de salida 0).
-
 ## Nota
 
-Aparecen otras syscalls (como `open`, `mmap`, `brk`, etc.) asociadas a la carga dinámica de bibliotecas y manejo de memoria, pero no son parte directa de la impresión del saludo.
+Comportamiento observado: si no hay argumento imprime el valor por defecto; si hay argumento imprime `argv[1]`.
 
 ---
 
 ## Punto 2 — bin/fail
 
-Al ejecutar `strace ./bin/fail` se observa que el programa intenta abrir un archivo llamado `archivo.txt` en el directorio actual:
+Con `strace`, `bin/fail` intenta abrir `archivo.txt` en el directorio actual.
 
-- Si existe:
+- Caso archivo presente:
   - `openat(AT_FDCWD, "archivo.txt", O_RDONLY) = 3`
-  - imprime `ok` por stdout: `write(1, "ok\n", 3)`
-  - finaliza con éxito: `exit_group(0)`
+  - `write(1, "ok\n", 3)`
+  - `exit_group(0)`
 
-- Si no existe:
-  - `openat(...) = -1 ENOENT`
-  - imprime `error` por stderr: `write(2, "error\n", 6)`
-  - finaliza con error: `exit_group(1)`
+- Caso archivo ausente:
+  - `openat(AT_FDCWD, "archivo.txt", O_RDONLY) = -1 ENOENT`
+  - `write(2, "error\n", 6)`
+  - `exit_group(1)`
 
-Conclusión: el “fallo” se debe a que `archivo.txt` no está presente.  
-Solución (sin acceso al código fuente): crear `archivo.txt` (por ejemplo con `touch archivo.txt`) antes de ejecutar `bin/fail`.
+Conclusión: la falla se debe a la ausencia de `archivo.txt` en el directorio de ejecución. Con `archivo.txt` presente, `bin/fail` finaliza correctamente.
 
 ---
 
@@ -87,61 +74,24 @@ Además, en ambos modos:
 
 ### Verificación funcional
 
-Las pruebas se ejecutan en este orden para que cada escenario sea fácil de validar.
+Se validaron cuatro escenarios en ambos modos (`s` y `f`).
 
-Escenario 1: origen inexistente (debe fallar)
+| Escenario | Resultado esperado | Resultado observado |
+| --- | --- | --- |
+| Origen inexistente | Falla con exit code 1 | Cumple en `s` y `f` |
+| Directorio de destino inexistente | Falla con exit code 1 | Cumple en `s` y `f` |
+| Destino ausente | Copia correcta con exit code 0 | Cumple en `s` y `f` |
+| Destino existente | Falla con `File exists` y exit code 1 | Cumple en `s` y `f` |
 
-```bash
-./bin/mycopy s /tmp/no_existe_lab_999 /tmp/lab_dst_small.txt
-# open src: No such file or directory
-# exit code: 1
+En todos los casos, ambos modos mostraron el comportamiento esperado.
 
-./bin/mycopy f /tmp/no_existe_lab_999 /tmp/lab_dst_small.txt
-# fopen src: No such file or directory
-# exit code: 1
-```
-
-Escenario 2: directorio de destino inexistente (debe fallar)
+Bloque mínimo reproducible (caso: destino existente, debe fallar):
 
 ```bash
-printf 'abc\n' > /tmp/lab_src_small.txt
-
-./bin/mycopy s /tmp/lab_src_small.txt /tmp/dir_que_no_existe/out.txt
-# open dst: No such file or directory
-# exit code: 1
-
-./bin/mycopy f /tmp/lab_src_small.txt /tmp/dir_que_no_existe/out.txt
-# fopen dst: No such file or directory
-# exit code: 1
-```
-
-Preparación para escenarios de copia correcta y destino existente:
-
-```bash
-rm -f /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
-printf 'abc\n' > /tmp/lab_src_small.txt
-```
-
-Escenario 3: copia correcta con destino ausente (debe funcionar)
-
-```bash
-./bin/mycopy s /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
-# exit code: 0
-
-rm -f /tmp/lab_dst_small.txt
-./bin/mycopy f /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
-# exit code: 0
-```
-
-Escenario 4: destino ya existe (debe fallar)
-
-```bash
-./bin/mycopy s /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
-# open dst: File exists
-# exit code: 1
-
-./bin/mycopy f /tmp/lab_src_small.txt /tmp/lab_dst_small.txt
-# fopen dst: File exists
+touch /tmp/origen.txt
+touch /tmp/destino.txt
+./bin/mycopy s /tmp/origen.txt /tmp/destino.txt
+# esperado: open dst: File exists
 # exit code: 1
 ```
 
@@ -149,11 +99,14 @@ Escenario 4: destino ya existe (debe fallar)
 
 Se generó un archivo de 2 MiB y se ejecutó:
 
+Forma simple y rápida de crear el archivo de prueba:
+
 ```bash
-dd if=/dev/urandom of=/tmp/lab_big.bin bs=1M count=2 status=none
+truncate -s 2M /tmp/lab_big.bin
 ls -lh /tmp/lab_big.bin
 ```
 
+Pruebas con strace sobre dicho archivo
 ```bash
 strace -c ./bin/mycopy s /tmp/lab_big.bin /tmp/lab_out_s.bin
 strace -c ./bin/mycopy f /tmp/lab_big.bin /tmp/lab_out_f.bin
@@ -167,19 +120,23 @@ Resumen de resultados:
   - `read`: 8194 llamadas
   - `write`: 8192 llamadas
   - total de syscalls: 16418
-  - tiempo total: 0,144894 s
+  - tiempo total: 0,110315 s
 - Modo `f`:
   - `read`: 514 llamadas
   - `write`: 512 llamadas
   - total de syscalls: 1063
-  - tiempo total: 0,011822 s
+  - tiempo total: 0,011781 s
+
+Nota: los tiempos pueden variar entre ejecuciones, pero la relación entre ambos modos se mantiene.
 
 ### Diferencias observadas
 
-En este experimento se usó `BUFFER_SIZE = 256` en el programa. Con ese tamaño, el modo `s` hace muchas más llamadas al kernel porque cada iteración dispara `read` y `write` de bloques pequeños.
+Para esta comparación se usó `BUFFER_SIZE = 256`.
 
-En cambio, en modo `f`, la biblioteca estándar aplica buffering interno sobre los `FILE*`, por lo que termina realizando menos syscalls al kernel (bloques más grandes). Por eso el conteo de `read/write` en `strace -c` es mucho menor que en modo `s`.
+- Con `BUFFER_SIZE = 1`, la prueba se vuelve demasiado lenta por la gran cantidad de iteraciones y syscalls.
+- Con `BUFFER_SIZE = 4096`, para un archivo de 2 MiB la diferencia entre modos se vuelve poco significativa.
+- Con `BUFFER_SIZE = 256`, la diferencia queda bien visible en `strace -c`: el modo `s` concentra muchas más llamadas `read/write`, mientras que el modo `f` (por buffering interno de `stdio`) reduce fuertemente esa cantidad.
 
-Conclusión: con buffer de 256 bytes y archivo de 2 MiB, la diferencia entre ambas estrategias es evidente. El modo `f` realiza menos syscalls y tarda bastante menos tiempo total que el modo `s`.
+Conclusión: `BUFFER_SIZE = 256` fue un punto intermedio útil para observar el contraste entre ambos enfoques sin que la prueba sea excesivamente lenta.
 
 ---
